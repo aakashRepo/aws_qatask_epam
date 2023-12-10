@@ -1,0 +1,22 @@
+{
+  "Policies": [
+    "FullAccessPolicyEC2",
+    "FullAccessPolicyS3",
+    "ReadAccessPolicyS3"
+  ],
+  "Roles": [
+    "FullAccessRoleEC2",
+    "FullAccessRoleS3",
+    "ReadAccessRoleS3"
+  ],
+  "Groups": [
+    "FullAccessGroupEC2",
+    "FullAccessGroupS3",
+    "ReadAccessGroupS3"
+  ],
+  "Users": [
+    "FullAccessUserEC2",
+    "FullAccessUserS3",
+    "ReadAccessUserS3"
+  ]
+}
