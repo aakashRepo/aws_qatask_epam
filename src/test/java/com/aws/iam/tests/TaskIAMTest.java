@@ -1,73 +1,177 @@
 package com.aws.iam.tests;
+
+import lombok.extern.slf4j.Slf4j;
 import org.assertj.core.api.SoftAssertions;
 import org.assertj.core.api.junit.jupiter.SoftAssertionsExtension;
-import org.junit.jupiter.api.MethodOrderer;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.policybuilder.iam.IamPolicyReader;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.iam.IamClient;
 import software.amazon.awssdk.services.iam.model.*;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @ExtendWith(SoftAssertionsExtension.class)
-public class TaskIAMTest {
+@Slf4j
+class TaskIAMTest {
 
-    @Test
-    public void testUserList(SoftAssertions softAssertions) {
-        Region region = Region.AP_SOUTH_1;
+    private static Region region;
+    private static StaticCredentialsProvider credentialsProvider;
+    private static IamClient iam;
+    private ListPoliciesResponse listPolicies;
+    private ListGroupsResponse listGroups;
+    private ListRolesResponse listRoles;
+    private ListUsersResponse listUsers;
+
+    @BeforeAll
+    static void setUp() {
+        region = Region.AP_SOUTH_1;
         AwsBasicCredentials awsCreds = AwsBasicCredentials
-                .create("id", "key");
-        StaticCredentialsProvider credentialsProvider = StaticCredentialsProvider.create(awsCreds);
-
-        IamClient iam = IamClient.builder()
+                .create("", "");
+        credentialsProvider = StaticCredentialsProvider.create(awsCreds);
+        iam = IamClient.builder()
                 .credentialsProvider(credentialsProvider)
                 .region(region)
                 .build();
+    }
 
-        ListPoliciesResponse listPolicies = iam.listPolicies();
-        ListUsersResponse listUsers = iam.listUsers();
-        ListRolesResponse listRoles = iam.listRoles();
-        ListGroupsResponse groupRoles = iam.listGroups();
-        List<Role> rolList = listRoles.roles();
-
-        rolList.forEach(role -> {
-            System.out.println("Role Name: " + role.roleName());
-        });
-        //List Attached Policies to this Role
-        ListAttachedRolePoliciesRequest request = ListAttachedRolePoliciesRequest.builder()
-                .roleName("FullAccessRoleEC2")
-                .build();
-        ListAttachedRolePoliciesResponse  response = iam.listAttachedRolePolicies(request);
-        List<AttachedPolicy> attachedPolicies = response.attachedPolicies();
-        System.out.println(attachedPolicies);
-
+    @Test
+    @Order(1)
+    @Tag("testUser")
+    void testUser(SoftAssertions softAssertions) {
+        listUsers = iam.listUsers();
         List<User> userList = listUsers.users();
         userList.forEach(user -> {
             System.out.println("User Name: " + user.userName());
         });
-        //List Attached Policies to this User
-        ListAttachedUserPoliciesRequest requestUser = ListAttachedUserPoliciesRequest.builder()
+
+        //List user group membership: FullAccessUserEC2
+        ListGroupsForUserRequest requestUserGroup = ListGroupsForUserRequest.builder()
                 .userName("FullAccessUserEC2")
                 .build();
-        ListAttachedRolePoliciesResponse  responseUser = iam.listAttachedRolePolicies(request);
-        List<AttachedPolicy> attachedPoliciesUser = response.attachedPolicies();
-        System.out.println(attachedPolicies);
+        ListGroupsForUserResponse responseUserGroup = iam.listGroupsForUser(requestUserGroup);
+        String attachedUserGroup = responseUserGroup.groups().get(0).groupName();
+        System.out.println("User FullAccessUserEC2 is part of Group: " + attachedUserGroup);
+        softAssertions.assertThat(attachedUserGroup).isEqualTo("FullAccessGroupEC2");
 
+        //Verify user group membership: FullAccessPolicyS3
+        requestUserGroup = ListGroupsForUserRequest.builder()
+                .userName("FullAccessUserS3")
+                .build();
+        responseUserGroup = iam.listGroupsForUser(requestUserGroup);
+        attachedUserGroup = responseUserGroup.groups().get(0).groupName();
+        System.out.println("User FullAccessUserS3 is part of Group: " + attachedUserGroup);
+        softAssertions.assertThat(attachedUserGroup).isEqualTo("FullAccessGroupS3");
 
-        List<Policy> policyList = listPolicies.policies();
-        policyList.forEach(policy -> {
-            System.out.println("Policy Name: " + policy.policyName());
+        //Verify user group membership: ReadAccessUserS3
+        requestUserGroup = ListGroupsForUserRequest.builder()
+                .userName("ReadAccessUserS3")
+                .build();
+        responseUserGroup = iam.listGroupsForUser(requestUserGroup);
+        attachedUserGroup = responseUserGroup.groups().get(0).groupName();
+        System.out.println("User ReadAccessUserS3 is part of Group: " + attachedUserGroup);
+        softAssertions.assertThat(attachedUserGroup).isEqualTo("ReadAccessGroupS3");
+    }
+
+    @Test
+    @Order(2)
+    @Tag("testPolicy")
+    void testPolicy(SoftAssertions softAssertions) {
+        listPolicies = iam.listPolicies();
+        List<String> policyList = listPolicies.policies().stream().
+                filter(p -> !p.arn().contains("aws:policy")).collect(Collectors.toList()).
+                stream().map(Policy::policyName).sorted().collect(Collectors.toList());
+        List<String> policyListExpected = Arrays.asList("FullAccessPolicyEC2", "FullAccessPolicyS3", "ReadAccessPolicyS3");
+        softAssertions.assertThat(policyList).isEqualTo(policyListExpected);
+
+        GetPolicyRequest request = GetPolicyRequest.builder()
+                .policyArn("arn:aws:iam::355471061359:policy/FullAccessPolicyEC2")
+                .build();
+
+        GetPolicyResponse response = iam.getPolicy(request);
+        System.out.format("Successfully retrieved policy %s",
+                response.policy().policyName());
+    }
+
+    @Test
+    @Order(3)
+    @Tag("testRole")
+    void testRole(SoftAssertions softAssertions) {
+        listRoles = iam.listRoles();
+        List<Role> rolList = listRoles.roles();
+        rolList.forEach(role -> {
+            System.out.println("Role Name: " + role.roleName());
         });
 
-        List<Group> groupList = groupRoles.groups();
+        //Verify Policy attached to Role: FullAccessRoleEC2
+        ListAttachedRolePoliciesRequest request = ListAttachedRolePoliciesRequest.builder()
+                .roleName("FullAccessRoleEC2")
+                .build();
+        ListAttachedRolePoliciesResponse response = iam.listAttachedRolePolicies(request);
+        String attachedPolicy = response.attachedPolicies().get(0).policyName();
+        System.out.println("Policy Attached to Role - FullAccessRoleEC2 is: " + attachedPolicy);
+        softAssertions.assertThat(attachedPolicy).isEqualTo("FullAccessPolicyEC2");
+
+        //Verify Policy attached to Role: FullAccessRoleS3
+        request = ListAttachedRolePoliciesRequest.builder()
+                .roleName("FullAccessRoleS3")
+                .build();
+        response = iam.listAttachedRolePolicies(request);
+        attachedPolicy = response.attachedPolicies().get(0).policyName();
+        System.out.println("Policy Attached to Role - FullAccessRoleS3 is: " + attachedPolicy);
+        softAssertions.assertThat(attachedPolicy).isEqualTo("FullAccessPolicyS3");
+
+        //Verify Policy attached to Role: ReadAccessRoleS3
+        request = ListAttachedRolePoliciesRequest.builder()
+                .roleName("ReadAccessRoleS3")
+                .build();
+        response = iam.listAttachedRolePolicies(request);
+        attachedPolicy = response.attachedPolicies().get(0).policyName();
+        System.out.println("Policy Attached to Role - ReadAccessRoleS3 is: " + attachedPolicy);
+        softAssertions.assertThat(attachedPolicy).isEqualTo("ReadAccessPolicyS3");
+    }
+
+    @Test
+    @Order(4)
+    @Tag("testGroup")
+    void testGroup(SoftAssertions softAssertions) {
+        listGroups = iam.listGroups();
+        List<Group> groupList = listGroups.groups();
         groupList.forEach(group -> {
             System.out.println("Group Name: " + group.groupName());
         });
+
+        //Verify Group Policy: FullAccessGroupEC2
+        ListAttachedGroupPoliciesRequest request = ListAttachedGroupPoliciesRequest.builder()
+                .groupName("FullAccessGroupEC2")
+                .build();
+        ListAttachedGroupPoliciesResponse response = iam.listAttachedGroupPolicies(request);
+        String attachedPolicy = response.attachedPolicies().get(0).policyName();
+        System.out.println("Policy Attached to Group - FullAccessGroupEC2 is: " + attachedPolicy);
+        softAssertions.assertThat(attachedPolicy).isEqualTo("FullAccessPolicyEC2");
+
+        //Verify Group Policy: FullAccessGroupS3
+        request = ListAttachedGroupPoliciesRequest.builder()
+                .groupName("FullAccessGroupS3")
+                .build();
+        response = iam.listAttachedGroupPolicies(request);
+        attachedPolicy = response.attachedPolicies().get(0).policyName();
+        System.out.println("Policy Attached to Group - FullAccessGroupS3 is: " + attachedPolicy);
+        softAssertions.assertThat(attachedPolicy).isEqualTo("FullAccessPolicyS3");
+
+        //Verify Group Policy: ReadAccessGroupS3
+        request = ListAttachedGroupPoliciesRequest.builder()
+                .groupName("ReadAccessGroupS3")
+                .build();
+        response = iam.listAttachedGroupPolicies(request);
+        attachedPolicy = response.attachedPolicies().get(0).policyName();
+        System.out.println("Policy Attached to Group - ReadAccessGroupS3 is: " + attachedPolicy);
+        softAssertions.assertThat(attachedPolicy).isEqualTo("ReadAccessPolicyS3");
     }
 }
